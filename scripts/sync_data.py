@@ -3,6 +3,11 @@ import sqlite3
 import os
 from dotenv import load_dotenv
 
+# TODO
+# - 데이터 자동 적재 로직으로 개선
+# - 새로 업데이트 된 데이터만 가져오도록
+# - 정기예금이나 대출 API도 추가로 연결
+
 # >> 실행 및 확인
 # Cursor 터미널에서 아래 명령어를 쳐서 실제로 데이터를 가져오는지 확인
 # python scripts/sync_data.py

@@ -8,6 +8,10 @@ from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 
+# TODO
+# - 프롬프트 개선
+# - 테스트 필요
+
 load_dotenv()
 
 # 0. SSL 인증서 검증 무시 설정
@@ -21,7 +25,6 @@ llm = ChatGroq(
     groq_api_key=os.getenv("GROQ_API_KEY"),
     http_client=custom_client
 )
-
 
 # 2. 도구(Tool) 정의: DB 검색
 @tool
