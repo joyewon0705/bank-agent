@@ -32,8 +32,8 @@ python -m pip install --no-cache-dir ^
 echo.
 echo [3/3] 설치 완료!
 echo 가상환경을 사용하려면 아래 명령어를 순서대로 실행하세요:
-echo   1) 권한 문제 발생 방지:
-echo      Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
-echo   2) 가상환경 활성화:
-echo      .\venv\Scripts\activate
+echo   1) PowerShell
+echo     Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process; .\venv\Scripts\activate
+echo   2) Git Bash
+echo     source ./venv/Scripts/activate
 pause
