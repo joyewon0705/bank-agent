@@ -1,3 +1,4 @@
+import datetime
 import requests
 import sqlite3
 import os
@@ -63,10 +64,10 @@ def fetch_and_save_data():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    # 테이블 초기화 (일단은 덮어쓰기 방식으로 진행)
-    cursor.execute('DROP TABLE IF EXISTS savings')
+    # 1. 테이블 생성 (DROP 대신 CREATE TABLE IF NOT EXISTS 사용)
+    # last_updated 컬럼을 추가해서 언제 업데이트됐는지 기록합니다.
     cursor.execute('''
-    CREATE TABLE savings (
+    CREATE TABLE IF NOT EXISTS savings (
         id TEXT PRIMARY KEY,
         bank_name TEXT,
         product_name TEXT,
@@ -74,14 +75,16 @@ def fetch_and_save_data():
         intr_rate_type_nm TEXT,
         base_rate REAL,
         max_rate REAL,
-        term INTEGER
+        term INTEGER,
+        last_updated TEXT
     )
     ''')
 
-    count = 0
+    now = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    new_count = 0
+    update_count = 0
+
     for base in all_base_list:
-        # 해당 상품의 모든 기간 옵션을 뒤짐 (12, 24, 36개월 등)
-        # 우선은 12개월을 기본으로 하되, 에이전트가 더 많은 정보를 알 수 있게 로직 확장 가능
         relevant_options = [
             opt for opt in all_option_list 
             if opt['fin_prdt_cd'] == base['fin_prdt_cd'] and str(opt['save_trm']) == "12"
@@ -91,25 +94,37 @@ def fetch_and_save_data():
             continue
             
         selected_opt = next((o for o in relevant_options if o['intr_rate_type'] == 'S'), relevant_options[0])
-        
         base_rate = selected_opt.get('intr_rate') or 0.0
         max_rate = selected_opt.get('intr_rate2') or base_rate
 
-        cursor.execute('INSERT OR REPLACE INTO savings VALUES (?, ?, ?, ?, ?, ?, ?, ?)', (
-            base['fin_prdt_cd'],
-            base['kor_co_nm'],
-            base['fin_prdt_nm'],
-            base['spcl_cnd'],
-            selected_opt['intr_rate_type_nm'],
-            base_rate,
-            max_rate,
-            int(selected_opt['save_trm'])
-        ))
-        count += 1
+        # 2. 존재 여부 확인 후 분기 처리
+        cursor.execute('SELECT base_rate, max_rate FROM savings WHERE id = ?', (base['fin_prdt_cd'],))
+        existing = cursor.fetchone()
+
+        if existing:
+            # 기존 데이터가 있고 금리가 변했다면 업데이트
+            if existing[0] != base_rate or existing[1] != max_rate:
+                cursor.execute('''
+                UPDATE savings SET 
+                    base_rate = ?, max_rate = ?, last_updated = ?, special_condition = ?
+                WHERE id = ?
+                ''', (base_rate, max_rate, now, base['spcl_cnd'], base['fin_prdt_cd']))
+                update_count += 1
+        else:
+            # 새로운 상품이면 인서트
+            cursor.execute('''
+            INSERT INTO savings (id, bank_name, product_name, special_condition, intr_rate_type_nm, base_rate, max_rate, term, last_updated)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                base['fin_prdt_cd'], base['kor_co_nm'], base['fin_prdt_nm'], 
+                base['spcl_cnd'], selected_opt['intr_rate_type_nm'], 
+                base_rate, max_rate, int(selected_opt['save_trm']), now
+            ))
+            new_count += 1
 
     conn.commit()
     conn.close()
-    print(f"✅ 동기화 완료: 총 {count}개의 상품이 저장되었습니다.")
+    print(f"✅ 동기화 완료! (신규: {new_count}건, 업데이트: {update_count}건)")
 
 if __name__ == "__main__":
     fetch_and_save_data()
