@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Next.js dev overlay / indicator 숨김(개발 편의용 UI) */
+#__next-build-watcher,
+#__next-route-announcer,
+nextjs-portal {
+  display: none !important;
+}
+
+/* 일부 버전에서 DevTools/Indicator가 portal로 뜨는 경우 */
+[data-nextjs-scroll-focus-boundary],
+[data-nextjs-toast],
+[data-nextjs-dialog],
+[data-nextjs-devtools],
+[data-nextjs-root] {
+  display: none !important;
+}
