@@ -146,7 +146,25 @@ def fetch_top_products(product_type: str, top_n: int = 30) -> List[Dict[str, Any
         FROM products_base b
         JOIN options_savings o ON b.fin_prdt_cd = o.fin_prdt_cd
         WHERE b.product_type = ?
+          AND b.is_active = 1
         ORDER BY o.intr_rate2 DESC
+        LIMIT ?
+        """
+        cur.execute(sql, (db_type, top_n))
+        rows = cur.fetchall()
+        conn.close()
+        return [{"bank":r[0],"name":r[1],"rate":r[2],"special_condition_raw":(r[3] or "")} for r in rows]
+
+    # annuity는 현재 top 추천 로직이 loan 쿼리로 떨어질 수 있어서,
+    # 연금저축도 별도 처리 권장(그냥 깔끔하게 넣음)
+    if db_type in ["annuity", "연금저축"]:
+        sql = """
+        SELECT b.kor_co_nm, b.fin_prdt_nm, o.avg_prft_rate, b.spcl_cnd
+        FROM products_base b
+        JOIN options_annuity o ON b.fin_prdt_cd = o.fin_prdt_cd
+        WHERE b.product_type = ?
+          AND b.is_active = 1
+        ORDER BY o.avg_prft_rate DESC
         LIMIT ?
         """
         cur.execute(sql, (db_type, top_n))
@@ -159,6 +177,7 @@ def fetch_top_products(product_type: str, top_n: int = 30) -> List[Dict[str, Any
     FROM products_base b
     JOIN options_loan o ON b.fin_prdt_cd = o.fin_prdt_cd
     WHERE b.product_type = ?
+      AND b.is_active = 1
     ORDER BY o.lend_rate_min ASC
     LIMIT ?
     """
@@ -166,7 +185,6 @@ def fetch_top_products(product_type: str, top_n: int = 30) -> List[Dict[str, Any
     rows = cur.fetchall()
     conn.close()
     return [{"bank":r[0],"name":r[1],"rate":r[2],"special_condition_raw":(r[3] or "")} for r in rows]
-
 
 # -----------------------------
 # 3) DB 기반 조건 키워드
@@ -587,7 +605,7 @@ def fetch_products(
     product_type: str,
     page: int = 1,
     page_size: int = 20,
-    sort: str = "rate_desc",   # 예적금/연금: rate_desc, 대출: rate_asc 추천
+    sort: str = "rate_desc",
     q: str = "",
 ):
     db_type = _map_to_db_type_for_list(product_type)
@@ -607,6 +625,7 @@ def fetch_products(
             FROM products_base b
             JOIN options_savings o ON b.fin_prdt_cd = o.fin_prdt_cd
             WHERE b.product_type = ?
+              AND b.is_active = 1
               AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
             """,
             (db_type, q_like, q_like),
@@ -619,6 +638,7 @@ def fetch_products(
             FROM products_base b
             JOIN options_savings o ON b.fin_prdt_cd = o.fin_prdt_cd
             WHERE b.product_type = ?
+              AND b.is_active = 1
               AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
             ORDER BY {order}
             LIMIT ? OFFSET ?
@@ -633,14 +653,7 @@ def fetch_products(
             "page": page,
             "page_size": page_size,
             "items": [
-                {
-                    "id": r[0],
-                    "bank": r[1],
-                    "name": r[2],
-                    "rate": r[3],
-                    "join_way": r[4] or "",
-                    "spcl_cnd": r[5] or "",
-                }
+                {"id": r[0], "bank": r[1], "name": r[2], "rate": r[3], "join_way": r[4] or "", "spcl_cnd": r[5] or ""}
                 for r in rows
             ],
         }
@@ -655,6 +668,7 @@ def fetch_products(
             FROM products_base b
             JOIN options_annuity o ON b.fin_prdt_cd = o.fin_prdt_cd
             WHERE b.product_type = ?
+              AND b.is_active = 1
               AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
             """,
             (db_type, q_like, q_like),
@@ -667,6 +681,7 @@ def fetch_products(
             FROM products_base b
             JOIN options_annuity o ON b.fin_prdt_cd = o.fin_prdt_cd
             WHERE b.product_type = ?
+              AND b.is_active = 1
               AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
             ORDER BY {order}
             LIMIT ? OFFSET ?
@@ -681,19 +696,12 @@ def fetch_products(
             "page": page,
             "page_size": page_size,
             "items": [
-                {
-                    "id": r[0],
-                    "bank": r[1],
-                    "name": r[2],
-                    "rate": r[3],  # 화면 라벨은 "평균수익률" 추천
-                    "join_way": r[4] or "",
-                    "spcl_cnd": r[5] or "",
-                }
+                {"id": r[0], "bank": r[1], "name": r[2], "rate": r[3], "join_way": r[4] or "", "spcl_cnd": r[5] or ""}
                 for r in rows
             ],
         }
 
-    # 3) 대출(주담대/전세/신용)
+    # 3) 대출
     order = "o.lend_rate_min ASC" if sort != "rate_desc" else "o.lend_rate_min DESC"
 
     cur.execute(
@@ -702,6 +710,7 @@ def fetch_products(
         FROM products_base b
         JOIN options_loan o ON b.fin_prdt_cd = o.fin_prdt_cd
         WHERE b.product_type = ?
+          AND b.is_active = 1
           AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
         """,
         (db_type, q_like, q_like),
@@ -714,6 +723,7 @@ def fetch_products(
         FROM products_base b
         JOIN options_loan o ON b.fin_prdt_cd = o.fin_prdt_cd
         WHERE b.product_type = ?
+          AND b.is_active = 1
           AND (b.kor_co_nm LIKE ? OR b.fin_prdt_nm LIKE ?)
         ORDER BY {order}
         LIMIT ? OFFSET ?
@@ -728,14 +738,7 @@ def fetch_products(
         "page": page,
         "page_size": page_size,
         "items": [
-            {
-                "id": r[0],
-                "bank": r[1],
-                "name": r[2],
-                "rate": r[3],  # 최저금리
-                "join_way": r[4] or "",
-                "spcl_cnd": r[5] or "",
-            }
+            {"id": r[0], "bank": r[1], "name": r[2], "rate": r[3], "join_way": r[4] or "", "spcl_cnd": r[5] or ""}
             for r in rows
         ],
     }
