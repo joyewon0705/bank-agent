@@ -48,6 +48,50 @@ const KB = {
   gray050: "#EDF1F7",
 };
 
+/** ---------- share helpers (url-safe) ---------- */
+function base64UrlEncode(str: string) {
+  const b64 =
+    typeof window !== "undefined"
+      ? window.btoa(unescape(encodeURIComponent(str)))
+      : "";
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+}
+function base64UrlDecode(b64url: string) {
+  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const txt =
+    typeof window !== "undefined"
+      ? decodeURIComponent(escape(window.atob(b64 + pad)))
+      : "";
+  return txt;
+}
+
+function buildRecommendationText(data: ProductResult) {
+  const header = `[금융 탐정 에이전트 추천 결과]\n`;
+  const meta = `${data.product_type ? `유형: ${data.product_type}\n` : ""}${
+    data.reason ? `요약: ${data.reason}\n` : ""
+  }`;
+
+  const list = data.products
+    .map((p, i) => {
+      const rate =
+        p.rate == null ? "-" : String(p.rate).includes("%") ? String(p.rate) : `${p.rate}%`;
+      const cond = p.special_condition_summary ?? p.special_condition_raw ?? "-";
+      const why = p.why_recommended ?? "-";
+      const title = `${i + 1}. ${(p.bank ?? "").trim()} ${p.name ?? ""}`.trim();
+
+      return `${title}
+- 금리: ${rate}
+- 추천 이유: ${why}
+- 우대조건: ${cond}
+`;
+    })
+    .join("\n");
+
+  const notes = data.notes ? `\n[메모]\n${data.notes}\n` : "";
+  return `${header}${meta}\n${list}${notes}`.trim();
+}
+
 function safeJsonParse<T>(text: string): T | null {
   try {
     return JSON.parse(text) as T;
@@ -164,7 +208,6 @@ function SlotCarousel({ state }: { state: SlotState }) {
               <div className="text-[15px] font-semibold text-gray-900">{c.title}</div>
               <div className="w-2 h-2 rounded-full" style={{ background: KB.secondary }} />
             </div>
-
             <div className="mt-3 space-y-2">
               {c.rows.map(([k, v], i) => (
                 <div key={i} className="flex items-center justify-between gap-3">
@@ -221,7 +264,6 @@ function ProductDetailSheet({
           role="dialog"
           aria-modal="true"
         >
-          {/* header */}
           <div className="px-5 pt-5 pb-4 border-b border-gray-100">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
@@ -260,7 +302,6 @@ function ProductDetailSheet({
             ) : null}
           </div>
 
-          {/* body */}
           <div className="px-5 py-4 overflow-y-auto max-h-[calc(86vh-140px)] space-y-4">
             {why ? (
               <div className="rounded-2xl border border-gray-100 p-4">
@@ -281,7 +322,6 @@ function ProductDetailSheet({
             </div>
           </div>
 
-          {/* footer */}
           <div className="px-5 py-4 border-t border-gray-100 bg-white">
             <button
               type="button"
@@ -305,9 +345,12 @@ function ProductCarousel({ data }: { data: ProductResult }) {
     return s.includes("%") ? s : `${s}%`;
   };
 
-  // ✅ detail state
+  // detail state
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<ProductResult["products"][number] | null>(null);
+
+  // action toast (간단 버전)
+  const [toast, setToast] = useState<string>("");
 
   const openDetail = (p: ProductResult["products"][number]) => {
     setSelected(p);
@@ -318,16 +361,90 @@ function ProductCarousel({ data }: { data: ProductResult }) {
     setSelected(null);
   };
 
+  const showToast = (msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(""), 1600);
+  };
+
+  const copyText = async () => {
+    const text = buildRecommendationText(data);
+    try {
+      await navigator.clipboard.writeText(text);
+      showToast("추천 결과를 복사했어요");
+    } catch {
+      // clipboard 실패시 fallback
+      try {
+        const ta = document.createElement("textarea");
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand("copy");
+        document.body.removeChild(ta);
+        showToast("추천 결과를 복사했어요");
+      } catch {
+        showToast("복사 실패 (브라우저 권한 확인)");
+      }
+    }
+  };
+
+  const shareLink = async () => {
+    try {
+      const payload = JSON.stringify({
+        v: 1,
+        created_at: new Date().toISOString(),
+        data,
+      });
+      const encoded = base64UrlEncode(payload);
+      const url = `${window.location.origin}/share?data=${encoded}`;
+
+      await navigator.clipboard.writeText(url);
+      showToast("공유 링크를 복사했어요");
+
+      // 바로 이동도 시켜줌 (원치 않으면 주석)
+      window.location.href = `/share?data=${encoded}`;
+    } catch {
+      showToast("링크 생성 실패");
+    }
+  };
+
   return (
-    <div className="space-y-3">
-      {(data.product_type || data.reason) && (
-        <div className="text-sm text-gray-600">
-          <span className="font-semibold" style={{ color: KB.primary }}>
-            {data.product_type ?? "추천"}
-          </span>
-          {data.reason ? <span className="ml-2">{data.reason}</span> : null}
+    <div className="space-y-3 relative">
+      {/* 상단 헤더 + 액션 */}
+      <div className="flex items-start justify-between gap-3">
+        {(data.product_type || data.reason) ? (
+          <div className="text-sm text-gray-600 min-w-0">
+            <span className="font-semibold" style={{ color: KB.primary }}>
+              {data.product_type ?? "추천"}
+            </span>
+            {data.reason ? <span className="ml-2">{data.reason}</span> : null}
+          </div>
+        ) : (
+          <div className="text-sm text-gray-600">
+            <span className="font-semibold" style={{ color: KB.primary }}>
+              추천 결과
+            </span>
+          </div>
+        )}
+
+        <div className="flex gap-2 shrink-0">
+          <button
+            type="button"
+            onClick={copyText}
+            className="h-8 px-3 rounded-full text-xs font-semibold border border-gray-200 bg-white"
+            style={{ color: KB.primary }}
+          >
+            📋 복사
+          </button>
+          <button
+            type="button"
+            onClick={shareLink}
+            className="h-8 px-3 rounded-full text-xs font-semibold"
+            style={{ background: KB.primary, color: "white" }}
+          >
+            🔗 링크
+          </button>
         </div>
-      )}
+      </div>
 
       <div className="flex gap-3 overflow-x-auto pr-2 snap-x snap-mandatory [-webkit-overflow-scrolling:touch]">
         {data.products.map((p, idx) => (
@@ -375,8 +492,16 @@ function ProductCarousel({ data }: { data: ProductResult }) {
 
       {data.notes && <div className="text-xs text-gray-500 whitespace-pre-wrap">{data.notes}</div>}
 
-      {/* ✅ sheet */}
       <ProductDetailSheet open={detailOpen} product={selected} onClose={closeDetail} />
+
+      {/* 미니 토스트 */}
+      {toast && (
+        <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60]">
+          <div className="px-4 py-2 rounded-full bg-black/80 text-white text-sm shadow-lg">
+            {toast}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -465,7 +590,6 @@ export default function ChatPage() {
     <main className="flex flex-col h-screen" style={{ background: KB.bg, color: "#1F2937" }}>
       <Header title="금융 탐정 에이전트" />
 
-      {/* ✅ Products처럼 max-w-5xl */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-5xl mx-auto w-full px-4 py-6 space-y-6">
           {messages.length === 0 && (
@@ -495,7 +619,6 @@ export default function ChatPage() {
         </div>
       </div>
 
-      {/* ✅ 입력도 max-w-5xl */}
       <div className="p-4 bg-white border-t border-gray-100 pb-8">
         <div className="max-w-5xl mx-auto w-full flex items-center gap-3 bg-[#F3F6FB] p-2 rounded-full px-5 focus-within:ring-2 transition-all">
           <input
@@ -514,7 +637,12 @@ export default function ChatPage() {
             aria-label="전송"
           >
             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 10l7-7m0 0l7 7m-7-7v18" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth="2.5"
+                d="M5 10l7-7m0 0l7 7m-7-7v18"
+              />
             </svg>
           </button>
         </div>
