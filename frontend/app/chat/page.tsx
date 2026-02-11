@@ -75,7 +75,11 @@ function buildRecommendationText(data: ProductResult) {
   const list = data.products
     .map((p, i) => {
       const rate =
-        p.rate == null ? "-" : String(p.rate).includes("%") ? String(p.rate) : `${p.rate}%`;
+        p.rate == null
+          ? "-"
+          : String(p.rate).includes("%")
+          ? String(p.rate)
+          : `${p.rate}%`;
       const cond = p.special_condition_summary ?? p.special_condition_raw ?? "-";
       const why = p.why_recommended ?? "-";
       const title = `${i + 1}. ${(p.bank ?? "").trim()} ${p.name ?? ""}`.trim();
@@ -121,7 +125,8 @@ function splitTextAndJsonBlocks(
   const trimmed = content.trim();
 
   const whole = safeJsonParse<any>(trimmed);
-  if (whole && typeof whole === "object") return [{ kind: "json", value: trimmed }];
+  if (whole && typeof whole === "object")
+    return [{ kind: "json", value: trimmed }];
 
   const blocks: Array<{ kind: "text" | "json"; value: string }> = [];
   const regex = /```json\s*([\s\S]*?)\s*```/gi;
@@ -387,6 +392,7 @@ function ProductCarousel({ data }: { data: ProductResult }) {
     }
   };
 
+  // ✅ 링크 버튼: "복사만" (이동 없음)
   const shareLink = async () => {
     try {
       const payload = JSON.stringify({
@@ -400,8 +406,8 @@ function ProductCarousel({ data }: { data: ProductResult }) {
       await navigator.clipboard.writeText(url);
       showToast("공유 링크를 복사했어요");
 
-      // 바로 이동도 시켜줌 (원치 않으면 주석)
-      window.location.href = `/share?data=${encoded}`;
+      // ❌ 절대 이동하지 않음
+      // window.location.href = `/share?data=${encoded}`;
     } catch {
       showToast("링크 생성 실패");
     }
