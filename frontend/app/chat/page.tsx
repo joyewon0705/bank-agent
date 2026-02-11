@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Header from "../components/Header";
+import { compressToEncodedURIComponent } from "lz-string";
 
 type YesNoUnknown = "yes" | "no" | "unknown";
 
@@ -47,24 +48,6 @@ const KB = {
   bg: "#F7F9FD",
   gray050: "#EDF1F7",
 };
-
-/** ---------- share helpers (url-safe) ---------- */
-function base64UrlEncode(str: string) {
-  const b64 =
-    typeof window !== "undefined"
-      ? window.btoa(unescape(encodeURIComponent(str)))
-      : "";
-  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-function base64UrlDecode(b64url: string) {
-  const b64 = b64url.replace(/-/g, "+").replace(/_/g, "/");
-  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-  const txt =
-    typeof window !== "undefined"
-      ? decodeURIComponent(escape(window.atob(b64 + pad)))
-      : "";
-  return txt;
-}
 
 function buildRecommendationText(data: ProductResult) {
   const header = `[금융 탐정 에이전트 추천 결과]\n`;
@@ -236,7 +219,6 @@ function SlotCarousel({ state }: { state: SlotState }) {
   );
 }
 
-/** ✅ 추천 상품 "자세히 보기" 바텀시트/모달 */
 function ProductDetailSheet({
   open,
   product,
@@ -350,11 +332,9 @@ function ProductCarousel({ data }: { data: ProductResult }) {
     return s.includes("%") ? s : `${s}%`;
   };
 
-  // detail state
   const [detailOpen, setDetailOpen] = useState(false);
   const [selected, setSelected] = useState<ProductResult["products"][number] | null>(null);
 
-  // action toast (간단 버전)
   const [toast, setToast] = useState<string>("");
 
   const openDetail = (p: ProductResult["products"][number]) => {
@@ -377,7 +357,6 @@ function ProductCarousel({ data }: { data: ProductResult }) {
       await navigator.clipboard.writeText(text);
       showToast("추천 결과를 복사했어요");
     } catch {
-      // clipboard 실패시 fallback
       try {
         const ta = document.createElement("textarea");
         ta.value = text;
@@ -392,7 +371,7 @@ function ProductCarousel({ data }: { data: ProductResult }) {
     }
   };
 
-  // ✅ 링크 버튼: "복사만" (이동 없음)
+  // ✅ lz-string 압축 링크 생성 + 복사만
   const shareLink = async () => {
     try {
       const payload = JSON.stringify({
@@ -400,14 +379,12 @@ function ProductCarousel({ data }: { data: ProductResult }) {
         created_at: new Date().toISOString(),
         data,
       });
-      const encoded = base64UrlEncode(payload);
-      const url = `${window.location.origin}/share?data=${encoded}`;
+
+      const compressed = compressToEncodedURIComponent(payload);
+      const url = `${window.location.origin}/share?data=${compressed}`;
 
       await navigator.clipboard.writeText(url);
       showToast("공유 링크를 복사했어요");
-
-      // ❌ 절대 이동하지 않음
-      // window.location.href = `/share?data=${encoded}`;
     } catch {
       showToast("링크 생성 실패");
     }
@@ -415,7 +392,6 @@ function ProductCarousel({ data }: { data: ProductResult }) {
 
   return (
     <div className="space-y-3 relative">
-      {/* 상단 헤더 + 액션 */}
       <div className="flex items-start justify-between gap-3">
         {(data.product_type || data.reason) ? (
           <div className="text-sm text-gray-600 min-w-0">
@@ -500,7 +476,6 @@ function ProductCarousel({ data }: { data: ProductResult }) {
 
       <ProductDetailSheet open={detailOpen} product={selected} onClose={closeDetail} />
 
-      {/* 미니 토스트 */}
       {toast && (
         <div className="fixed left-1/2 -translate-x-1/2 bottom-24 z-[60]">
           <div className="px-4 py-2 rounded-full bg-black/80 text-white text-sm shadow-lg">
