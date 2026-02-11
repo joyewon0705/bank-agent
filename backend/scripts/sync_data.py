@@ -18,7 +18,6 @@ import httpx
 load_dotenv()
 API_KEY = os.getenv("FINLIFE_API_KEY")
 
-# 경로 고정 (실행 위치 상관없이 backend/bank_data.db 사용)
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))           # backend/scripts
 BACKEND_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, ".."))     # backend
 DB_PATH = os.path.join(BACKEND_DIR, "bank_data.db")
@@ -47,7 +46,6 @@ def db_conn(db_path: str = DB_PATH):
 
 
 def setup_db(conn: sqlite3.Connection):
-    """필수 테이블 생성"""
     cur = conn.cursor()
 
     cur.execute('''CREATE TABLE IF NOT EXISTS products_base (
@@ -58,8 +56,6 @@ def setup_db(conn: sqlite3.Connection):
         join_way TEXT,
         spcl_cnd TEXT,
         last_updated TEXT,
-
-        -- 운영용
         is_active INTEGER DEFAULT 1,
         ended_at TEXT DEFAULT NULL,
         last_seen_at TEXT DEFAULT NULL
@@ -99,10 +95,9 @@ def setup_db(conn: sqlite3.Connection):
         message TEXT
     )''')
 
-    # ✅ 우대/조건 기반 질문 카탈로그 (하드코딩 제거용)
     cur.execute('''CREATE TABLE IF NOT EXISTS condition_catalog (
         key TEXT PRIMARY KEY,
-        patterns_json TEXT NOT NULL,         -- JSON list[str]
+        patterns_json TEXT NOT NULL,
         question TEXT NOT NULL,
         explain TEXT DEFAULT NULL,
         is_active INTEGER DEFAULT 1,
@@ -114,7 +109,6 @@ def setup_db(conn: sqlite3.Connection):
 
 
 def ensure_condition_catalog_seeds(conn: sqlite3.Connection):
-    """초기/기본 조건 사전. (없으면 넣고, 있으면 유지)"""
     seeds = [
         {
             "key": "salary_transfer",
@@ -157,6 +151,12 @@ def ensure_condition_catalog_seeds(conn: sqlite3.Connection):
             "patterns": ["마케팅", "수신동의", "동의"],
             "question": "마케팅 수신 동의 같은 항목에 동의 가능하세요? (예/아니오/모름)",
             "explain": "",
+        },
+        {
+            "key": "new_customer",
+            "patterns": ["신규", "첫거래", "첫 거래", "신규고객", "신규 고객"],
+            "question": "해당 은행 ‘신규/첫거래’ 우대 대상일 가능성이 있나요? (예/아니오/모름)",
+            "explain": "일부 상품은 해당 은행에서 첫 거래 고객에게 우대금리를 주기도 해요.",
         },
     ]
 
@@ -229,9 +229,6 @@ def _clear_options_for_type(cur: sqlite3.Cursor, product_type: str):
     )
 
 
-# -----------------------------
-# API endpoints (금감원 finlife)
-# -----------------------------
 BASE_URL = "https://finlife.fss.or.kr/finlifeapi"
 URLS = {
     "saving": f"{BASE_URL}/savingProductsSearch.json",
@@ -242,7 +239,6 @@ URLS = {
     "credit": f"{BASE_URL}/creditLoanProductsSearch.json",
 }
 
-# 내부에서 쓰는 product_type 표준값
 TYPE_MAP = {
     "saving": "saving",
     "deposit": "deposit",
@@ -257,10 +253,8 @@ def _upsert_products(conn: sqlite3.Connection, product_type: str, base_list: Lis
     cur = conn.cursor()
     now = datetime.datetime.now().isoformat(timespec="seconds")
 
-    # options 테이블은 유형별로 싹 지우고 다시 넣는 방식(간단/안정)
     _clear_options_for_type(cur, product_type)
 
-    # base upsert + last_seen
     for b in base_list:
         fin_prdt_cd = b.get("fin_prdt_cd")
         if not fin_prdt_cd:
@@ -292,7 +286,6 @@ def _upsert_products(conn: sqlite3.Connection, product_type: str, base_list: Lis
             ),
         )
 
-    # options insert
     if product_type in ("saving", "deposit"):
         for o in opt_list:
             cur.execute(
@@ -308,7 +301,6 @@ def _upsert_products(conn: sqlite3.Connection, product_type: str, base_list: Lis
                     o.get("intr_rate_type_nm"),
                 ),
             )
-
     elif product_type == "annuity":
         for o in opt_list:
             cur.execute(
@@ -324,7 +316,6 @@ def _upsert_products(conn: sqlite3.Connection, product_type: str, base_list: Lis
                     _to_float(o.get("btrm_prft_rate_1")),
                 ),
             )
-
     else:
         for o in opt_list:
             cur.execute(
@@ -346,7 +337,6 @@ def _upsert_products(conn: sqlite3.Connection, product_type: str, base_list: Lis
 
 
 def _mark_ended_products(conn: sqlite3.Connection, product_type: str):
-    """이번 sync에서 안 보인 상품은 is_active=0 처리(간단 종료 처리)"""
     cur = conn.cursor()
     now = datetime.datetime.now().isoformat(timespec="seconds")
     cur.execute(
@@ -365,11 +355,7 @@ def sync_one(product_type_key: str, top_fin_grp_no: str = "020000") -> Tuple[boo
         return False, "FINLIFE_API_KEY env not set"
 
     url = URLS[product_type_key]
-    params = {
-        "auth": API_KEY,
-        "topFinGrpNo": top_fin_grp_no,
-        "pageNo": 1,
-    }
+    params = {"auth": API_KEY, "topFinGrpNo": top_fin_grp_no, "pageNo": 1}
 
     data, err = _fetch_json(url, params)
     if err:
@@ -391,14 +377,14 @@ def sync_one(product_type_key: str, top_fin_grp_no: str = "020000") -> Tuple[boo
 
 
 # -----------------------------
-# Auto expand condition_catalog (LLM)
+# Auto expand + sanitize condition_catalog (LLM)
 # -----------------------------
 AUTO_EXPAND_SYSTEM = """
 너는 금융상품 '우대조건(spcl_cnd)' 문구를 분석해, 재사용 가능한 '조건 카탈로그' 항목을 만드는 역할이야.
 
 입력 JSON:
 {
-  "samples": ["우대조건 문구1", "우대조건 문구2", ...],
+  "samples": ["우대조건 문구1", ...],
   "existing_keys": ["salary_transfer", ...]
 }
 
@@ -408,21 +394,20 @@ AUTO_EXPAND_SYSTEM = """
     {
       "key": "snake_case_english",
       "patterns": ["한국어 핵심 키워드/짧은 구", "..."],
-      "question": "사용자에게 예/아니오/모름으로 답할 수 있게 묻는 한 문장",
+      "question": "사용자가 예/아니오/모름으로 답할 수 있는 자연스러운 질문 1문장",
       "explain": "짧은 설명(없으면 빈 문자열)",
       "confidence": 0.0~1.0
     }
   ]
 }
 
-규칙:
-- items는 최대 10개.
-- key는 영문 소문자 + 숫자 + 언더스코어만. (예: salary_transfer)
-- patterns는 2~8개, 각 2~10자 정도의 짧은 표현. (너무 긴 문장 금지)
-- question은 15~80자 정도, 끝에 (예/아니오/모름) 포함 권장.
-- existing_keys와 충돌하는 key는 만들지 마.
-- 너무 상품 특정적인 패턴(특정 상품명/은행명 등)은 patterns에 넣지 마.
-- '우대금리', '추가금리' 같은 너무 범용 패턴은 피하고, 실제 조건을 대표하는 단어를 써.
+중요 규칙:
+- items 최대 10개
+- key: 소문자/숫자/언더스코어만
+- patterns: 2~8개, 2~12자, 너무 범용적인 단어 금지(예: 우대금리/추가금리/조건/적용/제공)
+- question: '가능하세요/할 수 있나요/해당되나요/동의 가능하세요'처럼 사용자가 답할 수 있는 형태로 작성
+- "미션을 완수하면 우대조건이 제공되나요" 같은 수동적/이상한 표현 금지
+- existing_keys와 충돌 금지
 """
 
 
@@ -446,29 +431,63 @@ def _norm_key(s: str) -> str:
     return s
 
 
-def _is_generic_pattern(p: str) -> bool:
-    p = (p or "").strip()
-    bad = {"우대", "우대금리", "추가금리", "금리", "해당", "조건", "적용", "가입", "이용"}
-    return (p in bad) or (len(p) < 2)
-
-
 def _hash_patterns(patterns: list) -> str:
     raw = "|".join(sorted([str(x) for x in patterns if isinstance(x, str)]))
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
 
 
+GENERIC_PATTERN_BAD = {"우대", "우대금리", "추가금리", "금리", "해당", "조건", "적용", "가입", "이용", "제공", "혜택"}
+QUESTION_BANNED_WORDS = ["미션", "완수", "보상", "리워드", "쿠폰", "지급", "제공되나요", "성공하면", "달성하면", "받나요?"]
+
+
+def _is_bad_question(q: str) -> bool:
+    q = (q or "").strip()
+    if not q:
+        return True
+    for w in QUESTION_BANNED_WORDS:
+        if w in q:
+            return True
+    # 질문 형태 강제(너무 딱딱/수동적 방지)
+    ok_markers = ["가능", "할 수", "해당", "동의", "맞출", "설정", "가입"]
+    if not any(m in q for m in ok_markers):
+        return True
+    if "?" not in q:
+        return True
+    return False
+
+
+def sanitize_condition_catalog(db_path: str = DB_PATH) -> Dict[str, int]:
+    """
+    이미 들어간 이상한 질문을 비활성화(is_active=0)한다.
+    (특히 '미션', '제공되나요' 류)
+    """
+    with db_conn(db_path) as conn:
+        setup_db(conn)
+        cur = conn.cursor()
+        cur.execute("SELECT key, question FROM condition_catalog WHERE is_active=1")
+        rows = cur.fetchall()
+
+        deactivated = 0
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+
+        for k, q in rows:
+            if _is_bad_question(q):
+                cur.execute(
+                    "UPDATE condition_catalog SET is_active=0, updated_at=? WHERE key=?",
+                    (now, k),
+                )
+                deactivated += 1
+
+        conn.commit()
+        return {"deactivated": deactivated}
+
+
 def refresh_condition_catalog_auto(
     db_path: str = DB_PATH,
-    max_unmatched_samples: int = 60,   # LLM에 던질 샘플 수
-    max_new_items: int = 10,           # 1회 sync에서 추가할 최대 항목
-    min_confidence: float = 0.78,      # 자동 등록 기준
+    max_unmatched_samples: int = 60,
+    max_new_items: int = 10,
+    min_confidence: float = 0.82,   # 조금 올려서 이상 질문 유입 감소
 ) -> Dict[str, int]:
-    """
-    sync 후 자동으로 condition_catalog를 확장한다.
-    - 기존 카탈로그 패턴에 매칭되지 않는 spcl_cnd 문구를 수집
-    - LLM으로 새 조건 항목(items) 생성
-    - 검증 통과 + confidence>=min_confidence 인 항목만 DB insert
-    """
     if _llm is None:
         return {"auto_expand_added": 0, "auto_expand_skipped": 0, "unmatched_samples": 0}
 
@@ -554,6 +573,7 @@ def refresh_condition_catalog_auto(
                 skipped += 1
                 continue
 
+            # patterns 검증
             if not isinstance(patterns, list):
                 skipped += 1
                 continue
@@ -566,7 +586,7 @@ def refresh_condition_catalog_auto(
                     continue
                 if len(p) > 12:
                     continue
-                if _is_generic_pattern(p):
+                if p in GENERIC_PATTERN_BAD:
                     continue
                 cleaned.append(p)
             cleaned = list(dict.fromkeys(cleaned))
@@ -574,12 +594,17 @@ def refresh_condition_catalog_auto(
                 skipped += 1
                 continue
 
+            # question 검증/보정
             if len(question) < 10 or len(question) > 120:
+                skipped += 1
+                continue
+            if _is_bad_question(question):
                 skipped += 1
                 continue
             if "(예/아니오/모름)" not in question and len(question) <= 100:
                 question = question + " (예/아니오/모름)"
 
+            # 패턴 중복 방지
             pat_hash = _hash_patterns(cleaned)
             dup = False
             for _, pj in existed.items():
@@ -606,6 +631,12 @@ def refresh_condition_catalog_auto(
 
         conn.commit()
 
+    # 마지막으로 전체 정화(혹시 seed 수정/수동 입력 등도 잡기)
+    try:
+        sanitize_condition_catalog(db_path)
+    except Exception:
+        pass
+
     return {
         "auto_expand_added": added,
         "auto_expand_skipped": skipped,
@@ -614,11 +645,6 @@ def refresh_condition_catalog_auto(
 
 
 def run_sync(mode: str = "daily") -> Dict[str, str]:
-    """
-    mode:
-      - daily: 전체 싱크
-      - monthly: 동일(프로젝트 단계에서는 단순화)
-    """
     started = datetime.datetime.now().isoformat(timespec="seconds")
     with db_conn() as conn:
         setup_db(conn)
@@ -650,9 +676,13 @@ def run_sync(mode: str = "daily") -> Dict[str, str]:
         )
         conn.commit()
 
-    # ✅ sync 직후: seed 보장 + 자동 확장
+    # ✅ sync 직후: seed 보장 + 자동 확장 + 정화
     try:
         refresh_condition_catalog_auto(DB_PATH)
+    except Exception:
+        pass
+    try:
+        sanitize_condition_catalog(DB_PATH)
     except Exception:
         pass
 
