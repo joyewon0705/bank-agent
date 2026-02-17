@@ -5,6 +5,8 @@ from typing import Dict, List, Any
 import traceback
 import asyncio
 import datetime
+import os
+from dotenv import load_dotenv
 
 from langchain_core.messages import HumanMessage, AIMessage
 
@@ -16,6 +18,9 @@ from agent import (
 )
 
 from scripts.sync_data import run_sync
+
+load_dotenv()
+SECRET_KEY = os.getenv("ADMIN_SECRET")
 
 app = FastAPI()
 
@@ -211,6 +216,13 @@ async def chat(req: ChatRequest):
         tb = traceback.format_exc()
         raise HTTPException(status_code=500, detail=f"{e}\n{tb}")
 
+@app.post("/admin/sync")
+async def admin_sync(mode: str = "daily", secret: str = ""):
+    if secret != SECRET_KEY:
+        return {"error": "unauthorized"}
+
+    result = run_sync(mode)
+    return {"message": "sync completed", "result": result}
 
 # -----------------------------
 # 내부 스케줄: sync 자동 실행
