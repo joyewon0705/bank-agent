@@ -17,7 +17,7 @@ from agent import (
     fetch_products,
 )
 
-from scripts.sync_data import run_sync
+from scripts.sync_data import run_sync, DB_PATH
 
 load_dotenv()
 SECRET_KEY = os.getenv("ADMIN_SECRET")
@@ -42,6 +42,7 @@ class ChatRequest(BaseModel):
 
 @app.get("/")
 def read_root():
+    ensure_db_exists()
     return {"status": "Running"}
 
 
@@ -58,6 +59,7 @@ def list_products(
     sort: str = "rate_desc",
     q: str = "",
 ):
+    ensure_db_exists()
     if product_type not in ["적금", "예금", "연금저축", "주담대", "전세자금대출", "신용대출"]:
         raise HTTPException(status_code=400, detail="Invalid product type")
     return fetch_products(product_type, page, page_size, sort, q)
@@ -224,6 +226,11 @@ async def admin_sync(mode: str = "daily", secret: str = ""):
     result = run_sync(mode)
     return {"message": "sync completed", "result": result}
 
+def ensure_db_exists():
+    if not os.path.exists(DB_PATH):
+        print("DB not found. Running initial sync...")
+        run_sync("daily")
+
 # -----------------------------
 # 내부 스케줄: sync 자동 실행
 # -----------------------------
@@ -242,4 +249,5 @@ async def scheduler():
 
 @app.on_event("startup")
 async def startup_event():
+    ensure_db_exists()
     asyncio.create_task(scheduler())
