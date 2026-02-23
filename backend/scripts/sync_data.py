@@ -110,8 +110,59 @@ def setup_db(conn: sqlite3.Connection):
     )''')
 
     conn.commit()
+    create_indexes(conn)
     ensure_condition_catalog_seeds(conn)
 
+def create_indexes(conn):
+    cur = conn.cursor()
+
+    # 상품 기본 조회용 (product_type + 활성 상태)
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_products_type_active
+        ON products_base(product_type, is_active);
+    """)
+
+    # 은행 다양성 계산 시 사용
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_products_bank
+        ON products_base(kor_co_nm);
+    """)
+
+    # 적금/예금 금리 정렬용
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_savings_rate
+        ON options_savings(intr_rate2 DESC);
+    """)
+
+    # 연금 수익률 정렬용
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_annuity_rate
+        ON options_annuity(avg_prft_rate DESC);
+    """)
+
+    # 대출 금리 정렬용
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_loan_rate
+        ON options_loan(lend_rate_min ASC);
+    """)
+
+    # 상품 코드 조인 최적화
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_savings_prdt
+        ON options_savings(fin_prdt_cd);
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_annuity_prdt
+        ON options_annuity(fin_prdt_cd);
+    """)
+
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_loan_prdt
+        ON options_loan(fin_prdt_cd);
+    """)
+
+    conn.commit()
 
 def ensure_condition_catalog_seeds(conn: sqlite3.Connection):
     """초기/기본 조건 사전. (없으면 넣고, 있으면 유지)"""
